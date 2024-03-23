@@ -1,0 +1,6 @@
+cassandra-driver>=3.25.0
+pytest
+pytest-mock
+python-dotenv
+langchain
+langchain-openai
