@@ -2,7 +2,7 @@
 from .connection import CassandraConnection
 from .query import CassandraQuery, GetData
 from .transform import transform_data_after_retrieval, transform_data_before_insert
-from .schema import CassandraSchema
+from .schema import CassandraSchemaTool, GetCassandraSchema
 from .data_operations import insert_data_into_table, select_data_from_table, get_schema_from_database
 
 
