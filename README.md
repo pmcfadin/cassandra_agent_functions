@@ -40,13 +40,3 @@ The integration of AI agents with databases, especially with powerful NoSQL data
 (TODO: Outline guidelines for contributing to the project, including coding standards, pull request process, etc.)
 
 License
-
-
-
-├── cassandra_agent/
-│   ├── __init__.py
-│   ├── connection.py        # For managing Cassandra connections
-│   ├── query.py             # For data retrieval and insertion
-│   ├── transform.py         # For data transformations
-│   ├── schema.py            # For schema management
-│   └── utils.py 
