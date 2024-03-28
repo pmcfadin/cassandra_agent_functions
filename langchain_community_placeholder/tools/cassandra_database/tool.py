@@ -59,7 +59,7 @@ class GetSchemaCassandraDatabaseTool(BaseCassandraDatabaseTool, BaseTool):
 
     name: str = "cassandra_db_schema"
     description: str = """
-    Input to this tool is a keyspace name, output is a table description of a Apache Cassandra table.
+    Input to this tool is a keyspace name, output is a table description of Apache Cassandra tables.
     If the query is not correct, an error message will be returned.
     If an error is returned, report back to the user that the keyspace doesn't exist and stop.
     """
@@ -87,6 +87,12 @@ class _GetTableDataCassandraDatabaseToolInput(BaseModel):
             "The name of the table for which to return data."
         ),
     )
+    predicate: str = Field(
+        ...,
+        description=(
+            "The predicate for the query that uses the primary key."
+        ),
+    )
     limit: int = Field(
         ...,
         description=(
@@ -95,18 +101,27 @@ class _GetTableDataCassandraDatabaseToolInput(BaseModel):
     )
 
 class GetTableDataCassandraDatabaseTool(BaseCassandraDatabaseTool, BaseTool):
-    """Tool for getting data from a table in an Apache Cassandra database. Use the limit to specify the number of rows to return. A blank limit will return all rows."""
+    """
+    Tool for getting data from a table in an Apache Cassandra database. 
+    Use the WHERE clause to specify the predicate for the query that uses the primary key. A blank predicate will return all rows. Avoid this if possible. 
+    Use the limit to specify the number of rows to return. A blank limit will return all rows.
+    """
 
     name: str = "cassandra_db_data"
-    description: str = "Get data from the specified table in the specified keyspace."
+    description: str = """
+    Tool for getting data from a table in an Apache Cassandra database. 
+    Use the WHERE clause to specify the predicate for the query that uses the primary key. A blank predicate will return all rows. Avoid this if possible. 
+    Use the limit to specify the number of rows to return. A blank limit will return all rows.
+    """
     args_schema: Type[BaseModel] = _GetTableDataCassandraDatabaseToolInput
 
     def _run(
         self,
         keyspace: str,
         table: str,
+        predicate: str,
         limit: int,    
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
         """Get data from a table in a keyspace."""
-        return self.db.get_table_data_no_throw(keyspace, table, limit)
+        return self.db.get_table_data_no_throw(keyspace, table, predicate, limit)

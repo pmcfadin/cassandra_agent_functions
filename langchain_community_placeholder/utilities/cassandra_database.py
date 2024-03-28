@@ -119,20 +119,28 @@ class CassandraDatabase:
 
         return schema
 
-    def get_table_data_no_throw(self, keyspace: str, table: str, limit: int) -> str:
-        """Get data from the specified table in the specified keyspace."""
+    def get_table_data_no_throw(self, keyspace: str, table: str, predicate: str, limit: int) -> str:
+        """Get data from the specified table in the specified keyspace. Optionally can take a predicate for the WHERE clause and a limit."""
         try:
-            return self.get_table_data(keyspace, table, limit)
+            return self.get_table_data(keyspace, table, predicate, limit)
         except Exception as e:
             """Format the error message"""
             return f"Error: {e}"
 
-    def get_table_data(self, keyspace: str, table: str, limit: int) -> str:
+    # This is a more basic string building function that doesn't use a query builder or prepared statements
+    # TODO: Refactor to use a query builder or prepared statements
+    def get_table_data(self, keyspace: str, table: str, predicate: str, limit: int) -> str:
         """Get data from the specified table in the specified keyspace."""
+
+        query = f"SELECT * FROM {keyspace}.{table}"
+
+        if predicate:
+            query += f" WHERE {predicate}"
         if limit:
-            query = f"SELECT * FROM {keyspace}.{table} LIMIT {limit};"
-        else:        
-            query = f"SELECT * FROM {keyspace}.{table};"
+            query += f" LIMIT {limit}"
+        
+        query += ";"
+        
         result = self.run(query, fetch="all")
         data = "\n".join(str(row) for row in result)
         return data
