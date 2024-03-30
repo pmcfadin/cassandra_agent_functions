@@ -1,1 +1,5 @@
-gradio
+streamlit
+cassandra-driver>=3.25.0
+python-dotenv
+langchain
+langchain-openai

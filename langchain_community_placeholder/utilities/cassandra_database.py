@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from cassandra.cluster import Cluster, ResultSet
 from cassandra.query import dict_factory
+from cassandra.auth import PlainTextAuthProvider
 
 from langchain_core.utils import get_from_env
 
@@ -19,6 +20,10 @@ class CassandraDatabase:
         keyspace: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
+        secure_connect_bundle_path: Optional[str] = None,
+        mode: str = "CASSANDRA",
         **kwargs: Any,
     ):
         self._contact_points = contact_points.split(",") if isinstance(contact_points, str) else contact_points
@@ -26,23 +31,36 @@ class CassandraDatabase:
         self._keyspace = keyspace
         self._username = username
         self._password = password
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._secure_connect_bundle_path = secure_connect_bundle_path
+        self._mode = mode
         self._cluster = self._create_cluster()
-        self._session = self._cluster.connect(self._keyspace)
+        self._session = self._cluster.connect()
         self._session.row_factory = dict_factory
+        self.metadata = self._cluster.metadata
+        self._keyspace_info = self._cluster.metadata.keyspaces[self._keyspace]
+        self.tables = self._cluster.metadata.keyspaces[self._keyspace].tables
 
     def _create_cluster(self) -> Cluster:
-        return Cluster(
-            contact_points=self._contact_points,
-            port=self._port,
-            auth_provider=self._get_auth_provider(),
-            **self.get_extra_args()
-        )
+        if self._mode == "CASSANDRA":
+            return Cluster(
+                contact_points=self._contact_points,
+                port=self._port,
+                auth_provider=PlainTextAuthProvider(username=self._username, password=self._password),
+                **self.get_extra_args()
+            )
+        elif self._mode == "ASTRA":
+        
+            auth_provider = PlainTextAuthProvider(self._client_id, self._client_secret)
+            cloud_config= {
+                'secure_connect_bundle': self._secure_connect_bundle_path
+            }
+            cluster = Cluster(cloud=cloud_config, auth_provider=auth_provider)
+            return cluster
+        else:
+            raise ValueError("Mode must be either 'CASSANDRA' or 'ASTRA'")
 
-    def _get_auth_provider(self) -> Optional[Any]:
-        if self._username and self._password:
-            from cassandra.auth import PlainTextAuthProvider
-            return PlainTextAuthProvider(username=self._username, password=self._password)
-        return None
 
     def get_extra_args(self) -> Dict[str, Any]:
         return {}
@@ -149,3 +167,47 @@ class CassandraDatabase:
         """Return db context that you may want in agent prompt."""
         keyspaces = self._cluster.metadata.keyspaces.keys()
         return {"keyspaces": ", ".join(keyspaces)}
+    
+    def format_schema_to_markdown(self) -> str:
+        """
+        Takes the Metadata object from a Cassandra cluster connection and formats the schema
+        into a markdown representation.
+
+        :param metadata: The Metadata object from a Cassandra cluster connection.
+        :return: A string in markdown format representing the schema.
+        """
+        markdown_output = ""
+
+        # Iterate through each keyspace
+        for keyspace_name, keyspace_metadata in self.metadata.keyspaces.items():
+            if keyspace_name.startswith('system'):
+                continue # Skip system keyspaces
+
+            if keyspace_name.startswith('data_endpoint_auth'):
+                continue # Skip data_endpoint_auth keyspaces
+
+            if keyspace_name.startswith('datastax_sla'):
+                continue
+            
+            markdown_output += f"Keyspace Name: {keyspace_name}\n"
+
+            # Iterate through each table in the keyspace
+            for table_name, table_metadata in keyspace_metadata.tables.items():
+                markdown_output += f" - Table Name: {table_name}\n"
+                # List columns and their types
+                for column_name, column_metadata in table_metadata.columns.items():
+                    markdown_output += f"   - {column_name} ({column_metadata.cql_type})\n"
+
+                # List primary key components
+                primary_key_parts = [col.name for col in table_metadata.primary_key]
+                markdown_output += f"   - Primary Key ({', '.join(primary_key_parts)})\n"
+
+                # List indexes, if any
+                if table_metadata.indexes:
+                    markdown_output += "   - Indexes\n"
+                    for index_name, index_metadata in table_metadata.indexes.items():
+                        markdown_output += f"      - {index_name}: {index_metadata.kind}\n"
+
+            markdown_output += "\n"  # Add some spacing between keyspaces
+
+        return markdown_output

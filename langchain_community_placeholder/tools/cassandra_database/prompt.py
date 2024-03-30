@@ -17,7 +17,7 @@ CQL Query: """
 
 
 QUERY_PATH_PROMPT = """"
-You are an Apache Cassandra expert query analysis bot witht he following features and rules:
+You are an Apache Cassandra expert query analysis bot with the following features and rules:
  - You will take a question from the end user about finding certain data in the database.
  - You will examine the schema of the database and create a query path. 
  - You will provide the user with the correct query to find the data they are looking for showing the steps provided by the query path.
