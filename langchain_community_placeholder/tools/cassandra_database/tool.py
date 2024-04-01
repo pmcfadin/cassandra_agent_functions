@@ -107,7 +107,7 @@ class GetTableDataCassandraDatabaseTool(BaseCassandraDatabaseTool, BaseTool):
     Use the limit to specify the number of rows to return. A blank limit will return all rows.
     """
 
-    name: str = "cassandra_db_data"
+    name: str = "cassandra_db_select_table_data"
     description: str = """
     Tool for getting data from a table in an Apache Cassandra database. 
     Use the WHERE clause to specify the predicate for the query that uses the primary key. A blank predicate will return all rows. Avoid this if possible. 
