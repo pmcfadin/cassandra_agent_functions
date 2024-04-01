@@ -21,6 +21,9 @@ The Notebook and Streamlit app in the /examples directory are the best place to 
 **Core Library Development**
  - [x] Database Connection Management: Implement functions for establishing and managing connections to Cassandra clusters.
  - [x] Data Retrieval Functions: Develop functions for querying data from Cassandra tables with support for custom query parameters.
+ - [x] Add support for DataStax Astra, DataStax Enterprise and OSS Cassandra
+ - [ ] Provide ability for paged queries. Select queries are currently only allowed with limits.
+ - [ ] Add better exception handling for connections and database actions. Throwing a big stack trace isn't helpful. 
  - [ ] Data Insertion and Update Functions: Create functions for inserting and updating data in Cassandra tables, ensuring data integrity and efficiency.
  - [ ] Data Manipulation Functions
  - [ ] Automated Schema Management: Tools for managing database schemas, including creating and altering table structures based on AI model needs.
