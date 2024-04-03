@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Tuple, Optional, Sequence, Union
 
 import cassio
 from cassandra.cluster import Session, ResultSet
+import re
 
 IGNORED_KEYSPACES = ['system', 'system_auth', 'system_distributed', 'system_schema', 'system_traces', 'system_views', 'datastax_sla', 'data_endpoint_auth']
 
@@ -36,19 +37,16 @@ class CassandraDatabase:
         **kwargs: Any,
     ) -> Union[str, Sequence[Dict[str, Any]], ResultSet]:
         """Execute a CQL query and return the results."""
-        try:
-            result = self._session.execute(query, **kwargs)
-            if fetch == "all":
-                return list(result)
-            elif fetch == "one":
-                return result.one()._asdict() if result else {}
-            elif fetch == "cursor":
-                return result
-            else:
-                raise ValueError("Fetch parameter must be either 'one', 'all', or 'cursor'")
-        except Exception as e:
-            """Format the error message"""
-            return f"Error: {e}"
+        clean_query = self._validate_cql(query, 'SELECT')
+        result = self._session.execute(clean_query, **kwargs)
+        if fetch == "all":
+            return list(result)
+        elif fetch == "one":
+            return result.one()._asdict() if result else {}
+        elif fetch == "cursor":
+            return result
+        else:
+            raise ValueError("Fetch parameter must be either 'one', 'all', or 'cursor'")
 
     def run_no_throw(
         self,
@@ -149,6 +147,47 @@ class CassandraDatabase:
         for keyspace in self._keyspaces.keys():
             output += f"{self.format_keyspace_to_markdown(keyspace)}\n\n"
   
+    def _validate_cql(self, cql: str, type: str = 'SELECT') -> str:
+        """
+        Validates a CQL query string for basic formatting and safety checks.
+        Ensures that `cql` starts with the specified type (e.g., SELECT) and does not contain
+        content that could indicate CQL injection vulnerabilities.
+
+        Parameters:
+        - cql (str): The CQL query string to be validated.
+        - type (str): The expected starting keyword of the query, used to verify that the query
+        begins with the correct operation type (e.g., "SELECT", "UPDATE"). Defaults to "SELECT".
+
+        Returns:
+        - str: The trimmed and validated CQL query string without a trailing semicolon.
+
+        Raises:
+        - ValueError: If the value of `type` is not supported
+        - DatabaseError: If `cql` is considered unsafe
+        """
+        SUPPORTED_TYPES = ['SELECT']
+        if type and type.upper() not in SUPPORTED_TYPES:
+            raise ValueError(f"Unsupported CQL type: {type}. Supported types: {SUPPORTED_TYPES}")
+
+        # Basic sanity checks
+        cql_trimmed = cql.strip()
+        if not cql_trimmed.upper().startswith(type.upper()):
+            raise DatabaseError(f"CQL must start with {type.upper()}.")
+
+        # Allow a trailing semicolon, but remove (it is optional with the Python driver)
+        cql_trimmed = cql_trimmed.rstrip(';')
+
+        # Consider content within matching quotes to be "safe"
+        cql_sanitized = re.sub(r"'.*?'", '', cql_trimmed)    # Remove single-quoted strings
+        cql_sanitized = re.sub(r'".*?"', '', cql_sanitized)  # Remove double-quoted strings
+
+        # Find unsafe content in the remaining CQL
+        if ";" in cql_sanitized:
+            raise DatabaseError("Potentially unsafe CQL, as it contains a ; at a place other than the end or within quotation marks.")
+        
+        # The trimmed query, before modifications
+        return cql_trimmed
+
     def _fetch_keyspaces(self, keyspace_list : Optional[List[str]] = None):
         """
         Fetches a list of keyspace names from the Cassandra database. The list can be filtered by
@@ -173,6 +212,23 @@ class CassandraDatabase:
             return [ks['keyspace_name'] for ks in all_keyspaces if ks['keyspace_name'] not in self._exclude_keyspaces]
 
     def _fetch_filtered_schema_data(self, keyspace_list):
+        """
+        Fetches schema data, including tables, columns, and indexes, filtered by a list of keyspaces.
+        This method constructs CQL queries to retrieve detailed schema information from the specified
+        keyspaces and executes them to gather data about tables, columns, and indexes within those keyspaces.
+
+        Parameters:
+        - keyspace_list (List[str]): A list of keyspace names from which to fetch schema data.
+
+        Returns:
+        - Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]: A tuple containing three lists:
+        - The first list contains dictionaries of table details (keyspace name, table name, and comment).
+        - The second list contains dictionaries of column details (keyspace name, table name, column name, type, kind, and position).
+        - The third list contains dictionaries of index details (keyspace name, table name, index name, kind, and options).
+
+        This method allows for efficiently fetching schema information for multiple keyspaces in a single operation,
+        enabling applications to programmatically analyze or document the database schema.
+        """
         # Construct IN clause for CQL query
         keyspace_in_clause = ', '.join([f"'{ks}'" for ks in keyspace_list])
 
@@ -181,7 +237,7 @@ class CassandraDatabase:
         tables_data = self.run(tables_query, fetch="all")
 
         # Fetch filtered column details
-        columns_query = f"SELECT keyspace_name, table_name, column_name, type, kind, position FROM system_schema.columns WHERE keyspace_name IN ({keyspace_in_clause})"
+        columns_query = f"SELECT keyspace_name, table_name, column_name, type, kind, clustering_order, position FROM system_schema.columns WHERE keyspace_name IN ({keyspace_in_clause})"
         columns_data = self.run(columns_query, fetch="all")
 
         # Fetch filtered index details
@@ -210,14 +266,14 @@ class CassandraDatabase:
             # Filter columns and indexes for this table
             table_columns = [(c['column_name'], c['type']) for c in columns_data if c['keyspace_name'] == keyspace and c['table_name'] == table_name]
             partition_keys = [c['column_name'] for c in columns_data if c['kind'] == 'partition_key' and c['keyspace_name'] == keyspace and c['table_name'] == table_name]
-            clustering_keys = [c['column_name'] for c in columns_data if c['kind'] == 'clustering' and c['keyspace_name'] == keyspace and c['table_name'] == table_name]
-            table_indexes = [(i['index_name'], i['kind'], i['options']) for i in indexes_data if i['keyspace_name'] == keyspace and i['table_name'] == table_name]
+            clustering_keys = [(c['column_name'], c['clustering_order']) for c in columns_data if c['kind'] == 'clustering' and c['keyspace_name'] == keyspace and c['table_name'] == table_name]
+            table_indexes = [(c['index_name'], c['kind'], c['options']) for c in indexes_data if c['keyspace_name'] == keyspace and c['table_name'] == table_name]
             
             table_obj = Table(
                 keyspace=keyspace,
                 table_name=table_name,
                 comment=comment,
-                columns=table_columns,  # Directly compatible with your Table class structure
+                columns=table_columns,
                 partition=partition_keys,
                 clustering=clustering_keys,
                 indexes=table_indexes
@@ -277,7 +333,7 @@ class CassandraDatabase:
         # return None if we're not able to resolve
         return None
 
-class SchemaError(Exception):
+class DatabaseError(Exception):
     """Exception raised for errors in the database schema.
 
     Attributes:
@@ -292,11 +348,11 @@ class Table:
         self,
         keyspace: str,
         table_name: str,
-        db: Optional['CassandraDatabase'] = None,
+        db: Optional[CassandraDatabase] = None,
         comment: Optional[str] = None,
         columns: Optional[Tuple[str, str]] = None,
         partition: Optional[List[str]] = None,
-        clustering: Optional[List[str]] = None,
+        clustering: Optional[List[Tuple[str,str]]] = None,
         indexes: Optional[List[Tuple[str, str, str]]] = None
     ):
         """
@@ -314,7 +370,7 @@ class Table:
         - indexes (Optional[List[Tuple[str, str, str]]]): A list of tuples describing indexes, used if `db` is not provided.
 
         Raises:
-        - ValueError: If `keyspace` or `table_name` is not provided, or if `columns` is not provided when `db` is None.
+        - ValueError: If `keyspace` or `table_name` is not provided, or if `columns` or `partition` is not provided when `db` is None.
         """
         if keyspace is None or table_name is None:
             raise ValueError("keyspace and table_name are required")
@@ -329,9 +385,11 @@ class Table:
         else:
             if not columns or len(columns) == 0:
                 raise ValueError("non-empty column list must be provided")
+            if not partition or len(partition) == 0:
+                raise ValueError("non-empty partition list must be provided")
             self._comment = comment
             self._columns = columns
-            self._partition = partition or []
+            self._partition = partition
             self._clustering = clustering or []
             self._indexes = indexes or []
     
@@ -347,7 +405,8 @@ class Table:
 
         Returns:
         - str: A string in Markdown format detailing the table name (with optional header level),
-          keyspace (optional), comment, columns, partition keys, clustering keys, and indexes.
+          keyspace (optional), comment, columns, partition keys, clustering keys (with optional clustering order),
+          and indexes.
         """
         output = ""
         if header_level is not None:
@@ -365,7 +424,13 @@ class Table:
 
         output += f"- Partition ({', '.join(self._partition)})\n"
         if self._clustering:
-            output += f"- Clustering ({', '.join(self._clustering)})\n"
+            cluster_list = []
+            for column, clustering_order in self._clustering:
+                if clustering_order.lower() == 'none':
+                    cluster_list.append(column)
+                else:
+                    cluster_list.append(f"{column} {clustering_order}")
+            output += f"- Clustering: ({', '.join(cluster_list)})\n"
 
         if self._indexes:                    
             output += f"- Indexes\n"
@@ -395,11 +460,11 @@ class Table:
         return self._partition
     
     @property
-    def cluster(self) -> List[str]:
+    def cluster(self) -> List[Tuple[str,str]]:
         return self._clustering
     
     @property
-    def indexes(self) -> Tuple[str,str,str]:
+    def indexes(self) -> List[Tuple[str,str,str]]:
         return self._indexes
     
     def _resolve_comment(self, db) -> str:
@@ -408,22 +473,22 @@ class Table:
         if row is not None:
             return row['comment']
         else:
-            raise SchemaError(f"Table not found: {self._keyspace}.{self._table_name}")
+            raise DatabaseError(f"Table not found: {self._keyspace}.{self._table_name}")
 
-    def _resolve_columns(self, db) -> Tuple[List[Tuple[str, str]], List[str], List[str]]:
+    def _resolve_columns(self, db) -> Tuple[List[Tuple[str, str]], List[str], List[Tuple[str,str]]]:
         columns = []
         partition_info = []
         cluster_info = []
-        results = db.run(f"SELECT column_name, type, kind, position FROM system_schema.columns WHERE keyspace_name = '{self._keyspace}' AND table_name = '{self._table_name}';")
+        results = db.run(f"SELECT column_name, type, kind, clustering_order, position FROM system_schema.columns WHERE keyspace_name = '{self._keyspace}' AND table_name = '{self._table_name}';")
         for row in results:
             columns.append((row['column_name'], row['type']))
             if row['kind'] == 'partition_key':
                 partition_info.append((row['column_name'], row['position']))
             elif row['kind'] == 'clustering':
-                cluster_info.append((row['column_name'], row['position']))
+                cluster_info.append((row['column_name'], row['clustering_order'], row['position']))
 
         partition = [column_name for column_name, _ in sorted(partition_info, key=lambda x: x[1])]
-        cluster = [column_name for column_name, _ in sorted(cluster_info, key=lambda x: x[1])]
+        cluster = [(column_name, clustering_order) for column_name, clustering_order, _ in sorted(cluster_info, key=lambda x: x[2])]
 
         return columns, partition, cluster
     
